@@ -1,0 +1,29 @@
+{
+  "network": "somnia-testnet",
+  "chainId": 50312,
+  "rpc": "https://api.infra.testnet.somnia.network/",
+  "explorer": "https://shannon-explorer.somnia.network",
+  "deployedAt": "2026-05-26",
+  "deployer": "0xdb0Da230344Db3c46F2c33C085fB3670b4593B7F",
+  "platform": "0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776",
+  "contracts": {
+    "Governor": "0x6E36FEF89012f8D7C9E8B895Ca17117BD4af51FA",
+    "CoverageVault": "0xbc597Cf262ED16662BBE5b29a4922dB470c2cC84",
+    "PolicyManager": "0x30d1758D2680ED6ecA5322704d7093F53a58B824",
+    "IncidentResolver": "0xD9d29945ffd4D79bEd40395E7a074D9506FfB919",
+    "SentinelRegistry": "0x5CC59B5806d604F68875D8b6b069100767F84f6F",
+    "PremiumDistributor": "0xB3031C42585b49BC074c6e416aF537a1e8Fc24bd",
+    "VaultShareB": "0x7F15D2e562548F529Bb656a92F01A61f9Dadc268"
+  },
+  "agentIds": {
+    "riskScoring": "0 (placeholder — set via Governor.call PolicyManager.setRiskScoringAgentId)",
+    "exploitClassifier": "0 (placeholder — set via Governor.call IncidentResolver.setExploitClassifierAgentId)",
+    "warningVerifier": "0 (placeholder — set via Governor.call SentinelRegistry.setWarningVerifierAgentId)"
+  },
+  "smokeTest": {
+    "depositTx": "0x16c04981f195769cd05366e2670afb06830578473fc53d85502c14a76e7d2dba",
+    "depositedAmount": "0.5 STT",
+    "tranche": "B",
+    "sharesMinted": "0.5e18"
+  }
+}
