@@ -1,0 +1,137 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-teal: var(--teal);
+  --color-teal-foreground: var(--teal-foreground);
+  --color-amber: var(--amber);
+  --color-amber-foreground: var(--amber-foreground);
+  --color-rose: var(--rose);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-panel: var(--panel);
+  --color-panel-border: var(--panel-border);
+  --color-grid: var(--grid);
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --radius: 0.5rem;
+
+  /* Dark fintech — deep navy/charcoal */
+  --background: oklch(0.16 0.025 250);
+  --foreground: oklch(0.95 0.01 240);
+
+  --panel: oklch(0.20 0.028 250);
+  --panel-border: oklch(0.28 0.03 250);
+  --grid: oklch(0.24 0.025 250);
+
+  --card: oklch(0.20 0.028 250);
+  --card-foreground: oklch(0.95 0.01 240);
+  --popover: oklch(0.18 0.028 250);
+  --popover-foreground: oklch(0.95 0.01 240);
+
+  /* Electric teal — primary accent */
+  --primary: oklch(0.80 0.16 190);
+  --primary-foreground: oklch(0.15 0.03 230);
+
+  --secondary: oklch(0.25 0.03 250);
+  --secondary-foreground: oklch(0.92 0.01 240);
+
+  --muted: oklch(0.24 0.025 250);
+  --muted-foreground: oklch(0.66 0.02 240);
+
+  --accent: oklch(0.28 0.04 200);
+  --accent-foreground: oklch(0.95 0.01 240);
+
+  --destructive: oklch(0.65 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  --border: oklch(0.28 0.025 250);
+  --input: oklch(0.22 0.025 250);
+  --ring: oklch(0.80 0.16 190);
+
+  /* Semantic */
+  --teal: oklch(0.80 0.16 190);
+  --teal-foreground: oklch(0.15 0.03 230);
+  --amber: oklch(0.82 0.16 75);
+  --amber-foreground: oklch(0.15 0.03 230);
+  --rose: oklch(0.72 0.18 15);
+  --success: oklch(0.78 0.16 155);
+  --warning: oklch(0.82 0.16 75);
+}
+
+.dark {
+  /* same — app is dark-only */
+  --background: oklch(0.16 0.025 250);
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html, body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+  }
+  body {
+    background-image:
+      radial-gradient(circle at 20% 0%, color-mix(in oklab, var(--teal) 8%, transparent), transparent 50%),
+      radial-gradient(circle at 90% 10%, color-mix(in oklab, var(--amber) 5%, transparent), transparent 45%);
+    background-attachment: fixed;
+  }
+  code, pre, .mono { font-family: var(--font-mono); }
+}
+
+@utility mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@utility panel {
+  background-color: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+}
+
+@utility glow-teal {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--teal) 40%, transparent),
+              0 8px 32px -8px color-mix(in oklab, var(--teal) 35%, transparent);
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* RainbowKit dark tuning */
+:root {
+  --rk-colors-accentColor: var(--teal);
+  --rk-colors-accentColorForeground: oklch(0.15 0.03 230);
+}
