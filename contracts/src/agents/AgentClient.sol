@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {IAgentRequester} from "../interfaces/IAgentRequester.sol";
+import {
+    IAgentRequester,
+    ConsensusType,
+    Response,
+    ResponseStatus,
+    Request
+} from "../interfaces/IAgentRequester.sol";
 import {IAgentResponder} from "../interfaces/IAgentResponder.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Events} from "../libraries/Events.sol";
 
 /// @notice Base for any contract that invokes a Somnia Agent.
-///         Handles platform-msg-sender check, circuit breaker, deposit math, and rebate routing.
+///         Wraps the platform's createRequest / createAdvancedRequest with the
+///         caller's address and the standard handleResponse callback selector,
+///         and gates traffic with a failure-driven circuit breaker.
 abstract contract AgentClient is IAgentResponder {
     IAgentRequester public immutable platform;
     address public immutable governor;
@@ -18,6 +26,7 @@ abstract contract AgentClient is IAgentResponder {
     uint8 public resetThreshold;
     bool public circuitOpen;
 
+    /// @dev Sink for platform rebates of unspent deposit.
     uint256 public protocolReserve;
 
     modifier onlyPlatform() {
@@ -42,6 +51,65 @@ abstract contract AgentClient is IAgentResponder {
         openThreshold = openThreshold_;
         resetThreshold = resetThreshold_;
     }
+
+    // ---- Platform calls ----
+
+    function _agentCallbackSelector() internal pure returns (bytes4) {
+        return IAgentResponder.handleResponse.selector;
+    }
+
+    function _createRequest(uint256 agentId, bytes memory payload, uint256 value)
+        internal
+        returns (uint256 requestId)
+    {
+        requestId = platform.createRequest{value: value}(
+            agentId, address(this), _agentCallbackSelector(), payload
+        );
+    }
+
+    function _createAdvancedRequest(
+        uint256 agentId,
+        bytes memory payload,
+        uint256 value,
+        uint256 subcommitteeSize,
+        uint256 threshold,
+        ConsensusType consensusType,
+        uint256 timeout
+    ) internal returns (uint256 requestId) {
+        requestId = platform.createAdvancedRequest{value: value}(
+            agentId,
+            address(this),
+            _agentCallbackSelector(),
+            payload,
+            subcommitteeSize,
+            threshold,
+            consensusType,
+            timeout
+        );
+    }
+
+    // ---- Deposit math ----
+
+    /// @notice Required deposit for a standard request to `getRequestDeposit()`
+    ///         reserve + perAgentBudget * subcommitteeSize reward.
+    function _quoteDeposit(uint256 subcommitteeSize, uint256 perAgentBudget)
+        internal
+        view
+        returns (uint256)
+    {
+        return platform.getRequestDeposit() + perAgentBudget * subcommitteeSize;
+    }
+
+    function _quoteAdvancedDeposit(uint256 subcommitteeSize, uint256 perAgentBudget)
+        internal
+        view
+        returns (uint256)
+    {
+        return platform.getAdvancedRequestDeposit(subcommitteeSize)
+            + perAgentBudget * subcommitteeSize;
+    }
+
+    // ---- Circuit breaker ----
 
     function _onFailure() internal {
         unchecked {
@@ -77,17 +145,8 @@ abstract contract AgentClient is IAgentResponder {
 
     function _circuitTag() internal pure virtual returns (string memory);
 
-    /// @notice Compute the required deposit for an agent invocation.
-    function _quoteDeposit(uint8 subcommitteeSize, uint256 perAgentBudget)
-        internal
-        view
-        returns (uint256)
-    {
-        return platform.getRequestDeposit() + perAgentBudget * uint256(subcommitteeSize);
-    }
-
     receive() external payable virtual {
-        // Platform rebates flow here.
+        // Platform rebates of unused deposit flow here.
         protocolReserve += msg.value;
     }
 }
