@@ -3,12 +3,14 @@ pragma solidity ^0.8.26;
 
 import {Response, ResponseStatus, Request} from "./IAgentRequester.sol";
 
-/// @notice Callback interface implemented by any contract that invokes a Somnia Agent.
+/// @notice Callback shape the Somnia platform invokes on a requester contract.
+/// @dev The platform passes the structs as `memory`, not `calldata` — match
+///      that exactly or the selector will not register with the platform.
 interface IAgentResponder {
     function handleResponse(
         uint256 requestId,
-        Response[] calldata responses,
+        Response[] memory responses,
         ResponseStatus status,
-        Request calldata details
+        Request memory details
     ) external;
 }
