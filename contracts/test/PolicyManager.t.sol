@@ -7,6 +7,14 @@ import {RiskPolicy, PolicyState} from "../src/libraries/Types.sol";
 import {ResponseStatus} from "../src/interfaces/IAgentRequester.sol";
 
 contract PolicyManagerTest is Base {
+    // Score thresholds (matches PolicyManager._tierFromScore):
+    //   [0..33] → tier A (0)
+    //   [34..66] → tier B (1)
+    //   [67..100] → tier C (2)
+    uint16 internal constant SCORE_A = 10;
+    uint16 internal constant SCORE_B = 50;
+    uint16 internal constant SCORE_C = 85;
+
     function _stockVault() internal {
         _deposit(underwriterA, 0, 50 ether);
         _deposit(underwriterB, 1, 50 ether);
@@ -27,16 +35,17 @@ contract PolicyManagerTest is Base {
     }
 
     function test_RequestRiskScoreCachesTier() public {
-        _scoreContract(coveredContract, 850, 1);
-        (uint8 tier, uint16 score,, uint64 expires, ) = policyManager.coveredContractTier(coveredContract);
+        _scoreContract(coveredContract, SCORE_B, 0);
+        (uint8 tier, uint16 score,, uint64 expires,) =
+            policyManager.coveredContractTier(coveredContract);
         assertEq(tier, 1);
-        assertEq(score, 850);
+        assertEq(score, SCORE_B);
         assertGt(expires, block.number);
     }
 
     function test_IssuePolicyHappyPath() public {
         _stockVault();
-        _scoreContract(coveredContract, 850, 1);
+        _scoreContract(coveredContract, SCORE_B, 0);
 
         RiskPolicy memory p = _basicPolicy(1);
         bytes memory sig = _signPolicy(p);
@@ -45,7 +54,7 @@ contract PolicyManagerTest is Base {
         uint256 id = policyManager.issue{value: p.premium}(p, sig);
         assertEq(id, 1);
 
-        (, PolicyState state, , address holder,, uint256 coverage, uint8 tier,,) =
+        (, PolicyState state,, address holder,, uint256 coverage, uint8 tier,,) =
             policyManager.policies(id);
         assertEq(uint8(state), uint8(PolicyState.Active));
         assertEq(holder, policyholder);
@@ -58,9 +67,9 @@ contract PolicyManagerTest is Base {
 
     function test_IssueRevertsTierMismatch() public {
         _stockVault();
-        _scoreContract(coveredContract, 850, 1);
+        _scoreContract(coveredContract, SCORE_B, 0); // cache tier 1
 
-        RiskPolicy memory p = _basicPolicy(0); // expects A but cache is B
+        RiskPolicy memory p = _basicPolicy(0); // claim tier 0
         bytes memory sig = _signPolicy(p);
         vm.prank(policyholder);
         vm.expectRevert(Errors.TierMismatch.selector);
@@ -78,7 +87,7 @@ contract PolicyManagerTest is Base {
 
     function test_IssueRevertsTierExpired() public {
         _stockVault();
-        _scoreContract(coveredContract, 850, 1);
+        _scoreContract(coveredContract, SCORE_B, 0);
         vm.roll(block.number + TIER_TTL + 1);
 
         RiskPolicy memory p = _basicPolicy(1);
@@ -92,7 +101,7 @@ contract PolicyManagerTest is Base {
 
     function test_IssueRevertsInvalidSignature() public {
         _stockVault();
-        _scoreContract(coveredContract, 850, 1);
+        _scoreContract(coveredContract, SCORE_B, 0);
 
         RiskPolicy memory p = _basicPolicy(1);
         bytes memory badSig = abi.encodePacked(bytes32(0), bytes32(0), uint8(27));
@@ -103,7 +112,7 @@ contract PolicyManagerTest is Base {
 
     function test_NonceReplayProtection() public {
         _stockVault();
-        _scoreContract(coveredContract, 850, 1);
+        _scoreContract(coveredContract, SCORE_B, 0);
 
         RiskPolicy memory p = _basicPolicy(1);
         bytes memory sig = _signPolicy(p);
@@ -117,7 +126,7 @@ contract PolicyManagerTest is Base {
 
     function test_ExpireUnlocksCapital() public {
         _stockVault();
-        _scoreContract(coveredContract, 850, 1);
+        _scoreContract(coveredContract, SCORE_B, 0);
         RiskPolicy memory p = _basicPolicy(1);
         bytes memory sig = _signPolicy(p);
         vm.prank(policyholder);
@@ -139,5 +148,13 @@ contract PolicyManagerTest is Base {
             platform.fulfil(reqId, "", ResponseStatus.Failed);
         }
         assertTrue(policyManager.circuitOpen());
+    }
+
+    function test_ScoreClampedAtUpperBound() public {
+        // Out-of-bound positive should clamp to 100 → tier C (2).
+        _scoreContract(coveredContract, 9999, 0);
+        (uint8 tier, uint16 score,,,) = policyManager.coveredContractTier(coveredContract);
+        assertEq(tier, 2);
+        assertEq(score, 100);
     }
 }

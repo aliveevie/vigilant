@@ -3,21 +3,19 @@ pragma solidity ^0.8.26;
 
 import {AgentClient} from "./agents/AgentClient.sol";
 import {CoverageVault} from "./vault/CoverageVault.sol";
-import {IAgentRequester, Response, ResponseStatus, Request} from "./interfaces/IAgentRequester.sol";
+import {Response, ResponseStatus, Request} from "./interfaces/IAgentRequester.sol";
+import {ILLMInference, AgentIds} from "./interfaces/IAgents.sol";
 import {PolicyLib} from "./libraries/PolicyLib.sol";
 import {Errors} from "./libraries/Errors.sol";
 import {Events} from "./libraries/Events.sol";
-import {
-    RiskPolicy,
-    Policy,
-    PolicyState,
-    CachedTier
-} from "./libraries/Types.sol";
+import {RiskPolicy, Policy, PolicyState, CachedTier} from "./libraries/Types.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 /// @title PolicyManager
 /// @notice Issues, holds, and retires Vigilant parametric exploit policies.
-///         Invokes the RiskScoringAgent to seal risk tier into each EIP-712 envelope.
+///         Invokes the Somnia LLM Inference base agent (inferNumber) to derive
+///         a risk score for each covered contract, then maps that score to a
+///         vault tranche tier.
 contract PolicyManager is AgentClient {
     using PolicyLib for RiskPolicy;
     using ECDSA for bytes32;
@@ -29,10 +27,16 @@ contract PolicyManager is AgentClient {
 
     CoverageVault public immutable vault;
 
+    /// @dev Numeric ID of the agent invoked for risk scoring — defaults to
+    ///      the LLM Inference base agent on Somnia testnet.
     uint256 public riskScoringAgentId;
     uint256 public riskScoreCostPerAgent;
     uint8 public riskScoreSubcommitteeSize;
     uint64 public tierCacheTTLBlocks;
+
+    /// @dev System prompt fed to the LLM Inference agent for every risk-score
+    ///      request. Governor-tunable.
+    string public riskSystemPrompt;
 
     uint256 public nextPolicyId = 1;
 
@@ -40,7 +44,7 @@ contract PolicyManager is AgentClient {
     mapping(uint256 => uint256) public requestToCoveredContract; // requestId => uint160(coveredContract)
     mapping(address => uint256[]) internal _policiesByHolder;
     mapping(address => CachedTier) public coveredContractTier;
-    mapping(address => uint256) public usedNonces; // policyholder => nonce bitmap pointer (monotonic)
+    mapping(address => uint256) public usedNonces;
 
     address public incidentResolver;
 
@@ -55,10 +59,18 @@ contract PolicyManager is AgentClient {
     ) AgentClient(platform_, governor_, 5, 2) {
         if (vault_ == address(0)) revert Errors.ZeroAddress();
         vault = CoverageVault(payable(vault_));
-        riskScoringAgentId = riskScoringAgentId_;
+        riskScoringAgentId =
+            riskScoringAgentId_ == 0 ? AgentIds.LLM_INFERENCE_ID : riskScoringAgentId_;
         riskScoreCostPerAgent = riskScoreCostPerAgent_;
         riskScoreSubcommitteeSize = riskScoreSubcommitteeSize_;
         tierCacheTTLBlocks = tierCacheTTLBlocks_;
+
+        riskSystemPrompt =
+            "You are Vigilant's risk-scoring agent for an onchain insurance protocol. "
+            "Given a smart-contract address on the Somnia network, return a single integer in [0,100] "
+            "representing the probability that the contract will be exploited within the next 30 days. "
+            "0 means almost certainly safe, 100 means almost certainly exploitable. "
+            "Consider audit history, code patterns, admin keys, oracle dependencies, and TVL.";
 
         _domainSeparator = PolicyLib.domainSeparator(NAME, VERSION, address(this));
     }
@@ -81,13 +93,18 @@ contract PolicyManager is AgentClient {
         tierCacheTTLBlocks = v;
     }
 
+    function setRiskSystemPrompt(string calldata v) external onlyGovernor {
+        riskSystemPrompt = v;
+    }
+
     // ---- Risk scoring ----
 
     function quoteRiskScoreDeposit() public view returns (uint256) {
         return _quoteDeposit(riskScoreSubcommitteeSize, riskScoreCostPerAgent);
     }
 
-    /// @notice Request a fresh risk tier for `coveredContract`.
+    /// @notice Request a fresh risk tier for `coveredContract`. Encodes a call
+    ///         to ILLMInference.inferNumber as the payload.
     function requestRiskScore(address coveredContract)
         external
         payable
@@ -98,19 +115,22 @@ contract PolicyManager is AgentClient {
         uint256 needed = quoteRiskScoreDeposit();
         if (msg.value < needed) revert Errors.InsufficientDeposit();
 
-        bytes memory payload = abi.encode(coveredContract, _contextUri(coveredContract));
-        requestId = platform.createRequest{value: msg.value}(riskScoringAgentId, payload);
+        string memory prompt = _buildRiskPrompt(coveredContract);
+        bytes memory payload =
+            abi.encodeCall(ILLMInference.inferNumber, (prompt, riskSystemPrompt, int256(0), int256(100), false));
+
+        requestId = _createRequest(riskScoringAgentId, payload, msg.value);
         requestToCoveredContract[requestId] = uint256(uint160(coveredContract));
 
         emit Events.RiskScoreRequested(requestId, coveredContract, msg.sender);
     }
 
-    /// @notice Platform callback for the RiskScoringAgent.
+    /// @notice Platform callback for the LLM Inference agent.
     function handleResponse(
         uint256 requestId,
-        Response[] calldata responses,
+        Response[] memory responses,
         ResponseStatus status,
-        Request calldata /*details*/
+        Request memory /*details*/
     ) external override onlyPlatform {
         uint256 raw = requestToCoveredContract[requestId];
         if (raw == 0) revert Errors.UnknownRequest();
@@ -122,20 +142,38 @@ contract PolicyManager is AgentClient {
             return;
         }
 
-        (uint16 score, uint8 tier, bytes32 rationaleHash) =
-            abi.decode(responses[0].result, (uint16, uint8, bytes32));
-
-        if (tier > 2) revert Errors.InvalidTier();
+        int256 raw256 = abi.decode(responses[0].result, (int256));
+        if (raw256 < 0) raw256 = 0;
+        if (raw256 > 100) raw256 = 100;
+        uint16 score = uint16(uint256(raw256));
+        uint8 tier = _tierFromScore(score);
 
         CachedTier storage c = coveredContractTier[coveredContract];
         c.score = score;
         c.tier = tier;
         c.cachedAtBlock = uint64(block.number);
         c.expiresAtBlock = uint64(block.number) + tierCacheTTLBlocks;
-        c.rationaleHash = rationaleHash;
+        c.rationaleHash = keccak256(responses[0].result);
 
         _onSuccess();
         emit Events.RiskScoreReceived(coveredContract, score, tier, c.expiresAtBlock);
+    }
+
+    function _tierFromScore(uint16 score) internal pure returns (uint8) {
+        // [0..33] → A, [34..66] → B, [67..100] → C
+        if (score < 34) return 0;
+        if (score < 67) return 1;
+        return 2;
+    }
+
+    function _buildRiskPrompt(address coveredContract) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                "Estimate the 30-day exploit probability (0-100) for the Somnia contract at ",
+                _toHex(coveredContract),
+                "."
+            )
+        );
     }
 
     // ---- Issuance ----
@@ -160,24 +198,18 @@ contract PolicyManager is AgentClient {
         if (block.number > cached.expiresAtBlock) revert Errors.TierExpired();
         if (cached.tier != p.riskTier) revert Errors.TierMismatch();
 
-        // Replay protection: nonce must be strictly increasing per holder.
         if (p.nonce <= usedNonces[p.policyholder]) revert Errors.InvalidSignature();
         usedNonces[p.policyholder] = p.nonce;
 
-        // Verify EIP-712 signature.
         bytes32 digest = PolicyLib.digest(_domainSeparator, p.structHash());
         address signer = digest.recover(signature);
         if (signer != p.policyholder) revert Errors.InvalidSignature();
 
         if (msg.value < p.premium) revert Errors.InsufficientPremium();
 
-        // Lock capital in the matching tranche.
         vault.lock(p.riskTier, p.coverageAmount);
-
-        // Forward premium to vault (premium accounting + distribution).
         vault.receivePremium{value: p.premium}();
 
-        // Refund overpayment.
         if (msg.value > p.premium) {
             (bool ok,) = msg.sender.call{value: msg.value - p.premium}("");
             if (!ok) revert Errors.TransferFailed();
@@ -218,7 +250,6 @@ contract PolicyManager is AgentClient {
         emit Events.PolicyExpired(policyId);
     }
 
-    /// @notice Called only by IncidentResolver after a confirmed exploit verdict.
     function markPaidOut(uint256 policyId, uint256 amount) external {
         if (msg.sender != incidentResolver) revert Errors.NotIncidentResolver();
         Policy storage pol = policies[policyId];
@@ -241,11 +272,6 @@ contract PolicyManager is AgentClient {
 
     function domainSeparator() external view returns (bytes32) {
         return _domainSeparator;
-    }
-
-    function _contextUri(address c) internal pure returns (string memory) {
-        // Pinned to the Somnia explorer contract page. Validators dereference offchain.
-        return string(abi.encodePacked("somnia://contract/", _toHex(c)));
     }
 
     function _toHex(address a) internal pure returns (string memory) {
