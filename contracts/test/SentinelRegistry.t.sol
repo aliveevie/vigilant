@@ -2,14 +2,15 @@
 pragma solidity ^0.8.26;
 
 import "./Base.t.sol";
-import {Errors} from "../src/libraries/Errors.sol";
-import {Classification} from "../src/libraries/Types.sol";
 import {ResponseStatus} from "../src/interfaces/IAgentRequester.sol";
 
 contract SentinelRegistryTest is Base {
+    string internal constant VERDICT_CONFIRMED = "Confirmed";
+    string internal constant VERDICT_UNCONFIRMED = "Unconfirmed";
+
     function test_CorrectWarningPaysBounty() public {
         // Fund reserve from admin so bounty can be paid.
-        vm.prank(admin);
+        vm.deal(address(this), 1 ether);
         sentinels.fundReserve{value: 1 ether}();
 
         uint256 needed = sentinels.quoteWarningDeposit();
@@ -21,7 +22,7 @@ contract SentinelRegistryTest is Base {
         );
         (,,,,, uint256 reqId,,) = sentinels.warnings(wid);
 
-        bytes memory result = abi.encode(uint8(Classification.Exploit), uint8(95), bytes32("v"));
+        bytes memory result = abi.encode(VERDICT_CONFIRMED);
         platform.fulfil(reqId, result, ResponseStatus.Success);
 
         // Deposit returned + bounty paid.
@@ -40,7 +41,7 @@ contract SentinelRegistryTest is Base {
         );
         (,,,,, uint256 reqId,,) = sentinels.warnings(wid);
 
-        bytes memory result = abi.encode(uint8(Classification.Legitimate), uint8(99), bytes32("ok"));
+        bytes memory result = abi.encode(VERDICT_UNCONFIRMED);
         platform.fulfil(reqId, result, ResponseStatus.Success);
 
         assertEq(sentinels.getScore(sentinel), 0);
