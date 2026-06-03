@@ -3,27 +3,35 @@
   "chainId": 50312,
   "rpc": "https://api.infra.testnet.somnia.network/",
   "explorer": "https://shannon-explorer.somnia.network",
-  "deployedAt": "2026-05-26",
+  "deployedAt": "2026-05-28",
   "deployer": "0xdb0Da230344Db3c46F2c33C085fB3670b4593B7F",
   "platform": "0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776",
+  "agentRegistry": "0x08D1Fc808f1983d2Ea7B63a28ECD4d8C885Cd02A",
   "contracts": {
-    "Governor": "0x6E36FEF89012f8D7C9E8B895Ca17117BD4af51FA",
-    "CoverageVault": "0xbc597Cf262ED16662BBE5b29a4922dB470c2cC84",
-    "PolicyManager": "0x30d1758D2680ED6ecA5322704d7093F53a58B824",
-    "IncidentResolver": "0xD9d29945ffd4D79bEd40395E7a074D9506FfB919",
-    "SentinelRegistry": "0x5CC59B5806d604F68875D8b6b069100767F84f6F",
-    "PremiumDistributor": "0xB3031C42585b49BC074c6e416aF537a1e8Fc24bd",
-    "VaultShareB": "0x7F15D2e562548F529Bb656a92F01A61f9Dadc268"
+    "Governor": "0xF7B1ce04f92b39162Dfa528D3a29604d477ce6ec",
+    "CoverageVault": "0x6b0462e6af572Ed59c9B2e7dAd2a2C031C2b49FB",
+    "PolicyManager": "0x7819f4929D80b5F98448b16c775F7c7dA1eC7221",
+    "IncidentResolver": "0x790564795C471AD5FC20b1dac9fc837029eF9876",
+    "SentinelRegistry": "0x810fe610A7ad36810d68BF9BA3E1B7c9c22D8357",
+    "PremiumDistributor": "0xAb5597214489bf4F3BB69419AFdF3fB21649A492",
+    "VaultShareA": "0x9d2B2ff18f99D3bA2A06a904a572a42BE1c54BEe",
+    "VaultShareB": "0xbD218c55326967a54c58e823AED1d59a4E47A101",
+    "VaultShareC": "0x269794Bb84e22BDDd8B8cbef004996166D699598"
   },
   "agentIds": {
-    "riskScoring": "0 (placeholder — set via Governor.call PolicyManager.setRiskScoringAgentId)",
-    "exploitClassifier": "0 (placeholder — set via Governor.call IncidentResolver.setExploitClassifierAgentId)",
-    "warningVerifier": "0 (placeholder — set via Governor.call SentinelRegistry.setWarningVerifierAgentId)"
+    "riskScoring": "12847293847561029384",
+    "exploitClassifier": "12847293847561029384",
+    "warningVerifier": "12847293847561029384",
+    "note": "All three consumers invoke the Somnia LLM Inference base agent (agentId discovered from https://agents.testnet.somnia.network). Each contract embeds its own system prompt and allowedValues so the same model returns the right verdict shape."
   },
-  "smokeTest": {
-    "depositTx": "0x16c04981f195769cd05366e2670afb06830578473fc53d85502c14a76e7d2dba",
-    "depositedAmount": "0.5 STT",
-    "tranche": "B",
-    "sharesMinted": "0.5e18"
-  }
+  "agentPricing": {
+    "perAgentBudgetSTT": "0.07",
+    "platformReserveSTT": "0.03",
+    "defaultSubcommitteeSize": 3,
+    "perRequestCostSTT": "0.24"
+  },
+  "verified": true,
+  "verifier": "blockscout",
+  "verifierUrl": "https://shannon-explorer.somnia.network/api/",
+  "rebuildNotes": "Phase A rebuild against the real Somnia Agents platform. AgentClient now passes (callbackAddress, callbackSelector) into createRequest; full 6-field Response and 16-field Request structs; ResponseStatus { None, Pending, Success, Failed, TimedOut }; PolicyManager calls ILLMInference.inferNumber, IncidentResolver and SentinelRegistry call ILLMInference.inferString with constrained allowedValues."
 }

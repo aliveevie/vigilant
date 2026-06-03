@@ -80,20 +80,25 @@ contract Deploy is Script {
         internal
         returns (PolicyManager)
     {
-        return new PolicyManager(c.platformAddr, gov, vault, c.riskAgentId, 0.005 ether, 3, 1_000);
+        return new PolicyManager(c.platformAddr, gov, vault, c.riskAgentId, 0.07 ether, 3, 1_000);
     }
 
     function _deployResolver(Ctx memory c, address gov, address pm, address vault)
         internal
         returns (IncidentResolver)
     {
-        return
-            new IncidentResolver(c.platformAddr, gov, pm, vault, c.classifierAgentId, 0.005 ether, 3, 75);
+        // Pass agentId=0 to default to AgentIds.LLM_INFERENCE_ID; per-agent cost
+        // matches the LLM Inference price of 0.07 STT; default subcommittee size 3;
+        // escalation timeout 1 hour.
+        return new IncidentResolver(
+            c.platformAddr, gov, pm, vault, c.classifierAgentId, 0.07 ether, 3, 1 hours
+        );
     }
 
     function _deploySentinels(Ctx memory c, address gov) internal returns (SentinelRegistry) {
+        // Same defaults; bounty 0.05 STT, sentinel deposit 0.025 STT.
         return new SentinelRegistry(
-            c.platformAddr, gov, c.warningAgentId, 0.005 ether, 3, 80, 0.05 ether, 0.025 ether
+            c.platformAddr, gov, c.warningAgentId, 0.07 ether, 3, 0.05 ether, 0.025 ether
         );
     }
 
