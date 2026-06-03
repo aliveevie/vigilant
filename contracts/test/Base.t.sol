@@ -37,8 +37,7 @@ abstract contract Base is Test {
     uint256 internal constant CLASSIFY_BUDGET = 0.005 ether;
     uint256 internal constant WARNING_BUDGET = 0.005 ether;
     uint64 internal constant TIER_TTL = 1000;
-    uint8 internal constant CONFIDENCE_FLOOR = 70;
-    uint8 internal constant WARNING_CONFIDENCE = 80;
+    uint256 internal constant ESCALATED_TIMEOUT = 1 hours;
 
     uint256 internal constant RISK_AGENT_ID = 1001;
     uint256 internal constant CLASSIFIER_AGENT_ID = 1002;
@@ -68,7 +67,7 @@ abstract contract Base is Test {
             CLASSIFIER_AGENT_ID,
             CLASSIFY_BUDGET,
             3,
-            CONFIDENCE_FLOOR
+            ESCALATED_TIMEOUT
         );
         sentinels = new SentinelRegistry(
             address(platform),
@@ -76,7 +75,6 @@ abstract contract Base is Test {
             WARNING_AGENT_ID,
             WARNING_BUDGET,
             3,
-            WARNING_CONFIDENCE,
             0.1 ether,
             0.05 ether
         );
@@ -123,11 +121,14 @@ abstract contract Base is Test {
         shares = vault.deposit{value: amount}(tier);
     }
 
-    function _scoreContract(address target, uint16 score, uint8 tier) internal {
+    /// @dev `score` is a 0..100 risk score that the LLM Inference inferNumber
+    ///      base agent would have returned. `tier` is ignored (it is derived
+    ///      inside PolicyManager from the score: 0..33→A, 34..66→B, 67..100→C).
+    function _scoreContract(address target, uint16 score, uint8 /*tier*/) internal {
         uint256 needed = policyManager.quoteRiskScoreDeposit();
         vm.prank(policyholder);
         uint256 reqId = policyManager.requestRiskScore{value: needed}(target);
-        bytes memory result = abi.encode(score, tier, bytes32("rationale"));
+        bytes memory result = abi.encode(int256(uint256(score)));
         platform.fulfil(reqId, result, ResponseStatus.Success);
     }
 

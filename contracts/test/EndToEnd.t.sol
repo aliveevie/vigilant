@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import "./Base.t.sol";
-import {RiskPolicy, PolicyState, ClaimState, Classification} from "../src/libraries/Types.sol";
+import {RiskPolicy, PolicyState, ClaimState} from "../src/libraries/Types.sol";
 import {ResponseStatus} from "../src/interfaces/IAgentRequester.sol";
 
 contract EndToEndTest is Base {
@@ -13,15 +13,12 @@ contract EndToEndTest is Base {
         _deposit(underwriterC, 2, 30 ether);
         assertEq(vault.totalCapital(), 90 ether);
 
-        // 2) Risk scoring of a covered contract.
+        // 2) Risk scoring of a covered contract — score 85 → tier C (2).
         uint256 riskReqDeposit = policyManager.quoteRiskScoreDeposit();
         vm.prank(policyholder);
-        uint256 riskReq = policyManager.requestRiskScore{value: riskReqDeposit}(coveredContract);
-        platform.fulfil(
-            riskReq,
-            abi.encode(uint16(720), uint8(2), bytes32("first-principles")),
-            ResponseStatus.Success
-        );
+        uint256 riskReq =
+            policyManager.requestRiskScore{value: riskReqDeposit}(coveredContract);
+        platform.fulfil(riskReq, abi.encode(int256(85)), ResponseStatus.Success);
 
         // 3) Policyholder signs an EIP-712 envelope matching the cached tier (C) and issues.
         RiskPolicy memory p = RiskPolicy({
@@ -45,16 +42,13 @@ contract EndToEndTest is Base {
         vm.roll(block.number + 5);
         uint256 claimDeposit = resolver.quoteClaimDeposit();
         vm.prank(policyholder);
-        uint256 claimId =
-            resolver.fileClaim{value: claimDeposit}(policyId, bytes32("exploit-tx"), block.number);
-
-        // 5) Validators consensus on Exploit @ 92% confidence.
-        (,,,,, uint256 reqId,,) = resolver.claims(claimId);
-        platform.fulfil(
-            reqId,
-            abi.encode(uint8(Classification.Exploit), uint8(92), bytes32("verdict")),
-            ResponseStatus.Success
+        uint256 claimId = resolver.fileClaim{value: claimDeposit}(
+            policyId, bytes32("exploit-tx"), block.number
         );
+
+        // 5) Validator consensus on Exploit verdict.
+        (,,,,, uint256 reqId,,) = resolver.claims(claimId);
+        platform.fulfil(reqId, abi.encode(string("Exploit")), ResponseStatus.Success);
 
         // 6) Atomic payout from tranche C; policy marked PaidOut.
         (,,,, ClaimState cs,,,) = resolver.claims(claimId);
