@@ -1,0 +1,21 @@
+{
+  "name": "vigilant-sentinel-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous off-chain Sentinel for Vigilant — discovers covered contracts, watches them for exploit signals, and autonomously files onchain warnings that the Somnia LLM agent adjudicates.",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "watch": "tsx watch src/index.ts",
+    "simulate": "tsx src/index.ts --simulate"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
