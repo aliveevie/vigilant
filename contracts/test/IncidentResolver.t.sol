@@ -3,15 +3,21 @@ pragma solidity ^0.8.26;
 
 import "./Base.t.sol";
 import {Errors} from "../src/libraries/Errors.sol";
-import {RiskPolicy, PolicyState, ClaimState, Classification} from "../src/libraries/Types.sol";
+import {RiskPolicy, PolicyState, ClaimState} from "../src/libraries/Types.sol";
 import {ResponseStatus} from "../src/interfaces/IAgentRequester.sol";
+import {IncidentResolver} from "../src/IncidentResolver.sol";
 
 contract IncidentResolverTest is Base {
+    string internal constant VERDICT_EXPLOIT = "Exploit";
+    string internal constant VERDICT_NOT_EXPLOIT = "NotExploit";
+    string internal constant VERDICT_INCONCLUSIVE = "Inconclusive";
+
     function _setupActivePolicy() internal returns (uint256 policyId) {
         _deposit(underwriterA, 0, 50 ether);
         _deposit(underwriterB, 1, 50 ether);
         _deposit(underwriterC, 2, 50 ether);
-        _scoreContract(coveredContract, 850, 1);
+        // score 50 → tier B (1).
+        _scoreContract(coveredContract, 50, 0);
 
         RiskPolicy memory p = RiskPolicy({
             policyholder: policyholder,
@@ -38,20 +44,13 @@ contract IncidentResolverTest is Base {
             policyId, bytes32("evil-tx"), block.number
         );
 
-        // Validators reach consensus on Exploit with 95% confidence.
-        bytes memory result = abi.encode(uint8(Classification.Exploit), uint8(95), bytes32("verdict"));
-        (,,, , , , , , , bool resolved) = _readPending(claimId);
-        resolved; // unused
-
-        // requestId == 1 (first platform call after risk-score requestId)
-        // We track via resolver.claims(claimId).platformRequestId
         (,,,,, uint256 requestId,,) = resolver.claims(claimId);
+        bytes memory result = abi.encode(VERDICT_EXPLOIT);
         platform.fulfil(requestId, result, ResponseStatus.Success);
 
-        (,,,, ClaimState state,, uint8 cls, uint8 conf) = resolver.claims(claimId);
+        (,,,, ClaimState state,, uint8 cls,) = resolver.claims(claimId);
         assertEq(uint8(state), uint8(ClaimState.Confirmed));
-        assertEq(cls, uint8(Classification.Exploit));
-        assertEq(conf, 95);
+        assertEq(cls, 1); // 1 == exploit
 
         assertEq(policyholder.balance, balBefore - needed + 5 ether);
 
@@ -60,28 +59,30 @@ contract IncidentResolverTest is Base {
         assertEq(paidOut, 5 ether);
     }
 
-    function test_LowConfidenceRejects() public {
+    function test_NotExploitRejects() public {
         uint256 policyId = _setupActivePolicy();
         uint256 needed = resolver.quoteClaimDeposit();
         vm.prank(policyholder);
-        uint256 claimId = resolver.fileClaim{value: needed}(policyId, bytes32("tx"), block.number);
+        uint256 claimId =
+            resolver.fileClaim{value: needed}(policyId, bytes32("tx"), block.number);
         (,,,,, uint256 requestId,,) = resolver.claims(claimId);
 
-        bytes memory result = abi.encode(uint8(Classification.Exploit), uint8(40), bytes32("low"));
+        bytes memory result = abi.encode(VERDICT_NOT_EXPLOIT);
         platform.fulfil(requestId, result, ResponseStatus.Success);
 
         (,,,, ClaimState state,,,) = resolver.claims(claimId);
         assertEq(uint8(state), uint8(ClaimState.Rejected));
     }
 
-    function test_LegitimateRejects() public {
+    function test_InconclusiveRejects() public {
         uint256 policyId = _setupActivePolicy();
         uint256 needed = resolver.quoteClaimDeposit();
         vm.prank(policyholder);
-        uint256 claimId = resolver.fileClaim{value: needed}(policyId, bytes32("tx"), block.number);
+        uint256 claimId =
+            resolver.fileClaim{value: needed}(policyId, bytes32("tx"), block.number);
         (,,,,, uint256 requestId,,) = resolver.claims(claimId);
 
-        bytes memory result = abi.encode(uint8(Classification.Legitimate), uint8(99), bytes32("ok"));
+        bytes memory result = abi.encode(VERDICT_INCONCLUSIVE);
         platform.fulfil(requestId, result, ResponseStatus.Success);
 
         (,,,, ClaimState state,,,) = resolver.claims(claimId);
@@ -92,10 +93,11 @@ contract IncidentResolverTest is Base {
         uint256 policyId = _setupActivePolicy();
         uint256 needed = resolver.quoteClaimDeposit();
         vm.prank(policyholder);
-        uint256 claimId = resolver.fileClaim{value: needed}(policyId, bytes32("tx"), block.number);
+        uint256 claimId =
+            resolver.fileClaim{value: needed}(policyId, bytes32("tx"), block.number);
         (,,,,, uint256 requestId,,) = resolver.claims(claimId);
 
-        bytes memory result = abi.encode(uint8(Classification.Inconclusive), uint8(60), bytes32("?"));
+        bytes memory result = abi.encode(VERDICT_INCONCLUSIVE);
         platform.fulfil(requestId, result, ResponseStatus.Success);
 
         uint256 esc = resolver.quoteEscalationDeposit();
@@ -111,10 +113,11 @@ contract IncidentResolverTest is Base {
         uint256 policyId = _setupActivePolicy();
         uint256 needed = resolver.quoteClaimDeposit();
         vm.prank(policyholder);
-        uint256 claimId = resolver.fileClaim{value: needed}(policyId, bytes32("tx"), block.number);
+        uint256 claimId =
+            resolver.fileClaim{value: needed}(policyId, bytes32("tx"), block.number);
         (,,,,, uint256 requestId,,) = resolver.claims(claimId);
 
-        bytes memory result = abi.encode(uint8(Classification.Legitimate), uint8(99), bytes32("ok"));
+        bytes memory result = abi.encode(VERDICT_NOT_EXPLOIT);
         platform.fulfil(requestId, result, ResponseStatus.Success);
 
         uint256 esc = resolver.quoteEscalationDeposit();
@@ -122,9 +125,5 @@ contract IncidentResolverTest is Base {
         vm.prank(address(0xBAD));
         vm.expectRevert(Errors.NotPolicyManager.selector);
         resolver.escalate{value: esc}(claimId);
-    }
-
-    function _readPending(uint256) internal pure returns (uint256, uint256, bytes32, uint256, address, ClaimState, uint256, uint8, uint8, bool) {
-        return (0, 0, bytes32(0), 0, address(0), ClaimState.None, 0, 0, 0, false);
     }
 }

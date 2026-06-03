@@ -4,13 +4,17 @@ pragma solidity ^0.8.26;
 import {AgentClient} from "./agents/AgentClient.sol";
 import {CoverageVault} from "./vault/CoverageVault.sol";
 import {PolicyManager} from "./PolicyManager.sol";
-import {Response, ResponseStatus, Request} from "./interfaces/IAgentRequester.sol";
+import {ConsensusType, Response, ResponseStatus, Request} from "./interfaces/IAgentRequester.sol";
+import {ILLMInference, AgentIds} from "./interfaces/IAgents.sol";
 import {Errors} from "./libraries/Errors.sol";
 import {Events} from "./libraries/Events.sol";
-import {Claim, ClaimState, Classification, Policy, PolicyState} from "./libraries/Types.sol";
+import {Claim, ClaimState, Policy, PolicyState} from "./libraries/Types.sol";
 
 /// @title IncidentResolver
-/// @notice Claim engine. Invokes the ExploitClassifierAgent, atomically pays out on Exploit verdict.
+/// @notice Claim engine. Invokes the Somnia LLM Inference base agent
+///         (inferString, with allowedValues forming a verdict enum) to classify
+///         whether a reported transaction is an exploit. Atomically pays out
+///         when the verdict is "Exploit".
 contract IncidentResolver is AgentClient {
     PolicyManager public immutable policyManager;
     CoverageVault public immutable vault;
@@ -18,11 +22,17 @@ contract IncidentResolver is AgentClient {
     uint256 public exploitClassifierAgentId;
     uint256 public exploitClassifyCostPerAgent;
     uint8 public classifySubcommitteeSize;
+
+    /// @dev Escalation tunables for `createAdvancedRequest`.
     uint8 public escalatedSubcommitteeSize;
     uint8 public escalatedThreshold;
+    uint256 public escalatedTimeout;
 
-    uint8 public confidenceFloor;
-    uint8 public constant MIN_CONFIDENCE_FLOOR = 51;
+    /// @dev System prompt fed to the LLM Inference agent for every classification.
+    string public classifierSystemPrompt;
+    string public constant VERDICT_EXPLOIT = "Exploit";
+    string public constant VERDICT_NOT_EXPLOIT = "NotExploit";
+    string public constant VERDICT_INCONCLUSIVE = "Inconclusive";
 
     uint256 public nextClaimId = 1;
     mapping(uint256 => Claim) public claims;
@@ -36,24 +46,28 @@ contract IncidentResolver is AgentClient {
         uint256 exploitClassifierAgentId_,
         uint256 exploitClassifyCostPerAgent_,
         uint8 classifySubcommitteeSize_,
-        uint8 confidenceFloor_
+        uint256 escalatedTimeout_
     ) AgentClient(platform_, governor_, 5, 2) {
         if (policyManager_ == address(0) || vault_ == address(0)) revert Errors.ZeroAddress();
-        if (confidenceFloor_ < MIN_CONFIDENCE_FLOOR) revert Errors.InvalidConfidence();
         policyManager = PolicyManager(payable(policyManager_));
         vault = CoverageVault(payable(vault_));
-        exploitClassifierAgentId = exploitClassifierAgentId_;
+        exploitClassifierAgentId = exploitClassifierAgentId_ == 0
+            ? AgentIds.LLM_INFERENCE_ID
+            : exploitClassifierAgentId_;
         exploitClassifyCostPerAgent = exploitClassifyCostPerAgent_;
         classifySubcommitteeSize = classifySubcommitteeSize_;
-        confidenceFloor = confidenceFloor_;
         escalatedSubcommitteeSize = classifySubcommitteeSize_ * 2;
         escalatedThreshold = (escalatedSubcommitteeSize * 3) / 4; // 75%
-    }
+        escalatedTimeout = escalatedTimeout_ == 0 ? 1 hours : escalatedTimeout_;
 
-    function setConfidenceFloor(uint8 v) external onlyGovernor {
-        if (v < MIN_CONFIDENCE_FLOOR) revert Errors.InvalidConfidence();
-        emit Events.ConfidenceFloorChanged(confidenceFloor, v);
-        confidenceFloor = v;
+        classifierSystemPrompt =
+            "You are Vigilant's claim adjudicator. Given a Somnia contract address, "
+            "a candidate exploit transaction hash, and the block at which the incident occurred, "
+            "decide if the transaction exploited the contract. Respond with exactly one of: "
+            "\"Exploit\", \"NotExploit\", \"Inconclusive\". "
+            "Only answer \"Exploit\" if the transaction caused unauthorized loss of value or "
+            "abuse of an unintended state transition. Use \"Inconclusive\" if evidence is "
+            "insufficient. Never fabricate.";
     }
 
     function setExploitClassifyCostPerAgent(uint256 v) external onlyGovernor {
@@ -65,10 +79,18 @@ contract IncidentResolver is AgentClient {
         exploitClassifierAgentId = v;
     }
 
-    function setEscalationParams(uint8 size, uint8 threshold) external onlyGovernor {
+    function setEscalationParams(uint8 size, uint8 threshold, uint256 timeout)
+        external
+        onlyGovernor
+    {
         if (threshold == 0 || threshold > size) revert Errors.InvalidConfidence();
         escalatedSubcommitteeSize = size;
         escalatedThreshold = threshold;
+        if (timeout != 0) escalatedTimeout = timeout;
+    }
+
+    function setClassifierSystemPrompt(string calldata v) external onlyGovernor {
+        classifierSystemPrompt = v;
     }
 
     function quoteClaimDeposit() public view returns (uint256) {
@@ -76,7 +98,7 @@ contract IncidentResolver is AgentClient {
     }
 
     function quoteEscalationDeposit() public view returns (uint256) {
-        return _quoteDeposit(escalatedSubcommitteeSize, exploitClassifyCostPerAgent);
+        return _quoteAdvancedDeposit(escalatedSubcommitteeSize, exploitClassifyCostPerAgent);
     }
 
     // ---- Claim lifecycle ----
@@ -130,8 +152,8 @@ contract IncidentResolver is AgentClient {
         uint256 value
     ) internal returns (uint256 requestId) {
         (,,,, address coveredContract,,,,) = policyManager.policies(policyId);
-        bytes memory payload = abi.encode(coveredContract, exploitTx, incidentBlock);
-        requestId = platform.createRequest{value: value}(exploitClassifierAgentId, payload);
+        bytes memory payload = _buildClassifierPayload(coveredContract, exploitTx, incidentBlock);
+        requestId = _createRequest(exploitClassifierAgentId, payload, value);
     }
 
     function escalate(uint256 claimId) external payable whenCircuitClosed {
@@ -146,10 +168,16 @@ contract IncidentResolver is AgentClient {
         if (msg.value < needed) revert Errors.InsufficientDeposit();
 
         (,,,, address coveredContract,,,,) = policyManager.policies(c.policyId);
-        bytes memory payload = abi.encode(coveredContract, c.exploitTx, c.incidentBlock);
+        bytes memory payload = _buildClassifierPayload(coveredContract, c.exploitTx, c.incidentBlock);
 
-        uint256 newRequestId = platform.createAdvancedRequest{value: msg.value}(
-            exploitClassifierAgentId, payload, escalatedSubcommitteeSize, escalatedThreshold
+        uint256 newRequestId = _createAdvancedRequest(
+            exploitClassifierAgentId,
+            payload,
+            msg.value,
+            escalatedSubcommitteeSize,
+            escalatedThreshold,
+            ConsensusType.Threshold,
+            escalatedTimeout
         );
 
         c.state = ClaimState.Escalated;
@@ -160,9 +188,9 @@ contract IncidentResolver is AgentClient {
 
     function handleResponse(
         uint256 requestId,
-        Response[] calldata responses,
+        Response[] memory responses,
         ResponseStatus status,
-        Request calldata /*details*/
+        Request memory /*details*/
     ) external override onlyPlatform {
         uint256 claimId = requestToClaim[requestId];
         if (claimId == 0) revert Errors.UnknownRequest();
@@ -177,15 +205,14 @@ contract IncidentResolver is AgentClient {
             return;
         }
 
-        (uint8 classification, uint8 confidence, bytes32 rationaleHash) =
-            abi.decode(responses[0].result, (uint8, uint8, bytes32));
-        rationaleHash;
-        c.classification = classification;
-        c.confidence = confidence;
+        string memory verdict = abi.decode(responses[0].result, (string));
+        bool isExploit = _stringEq(verdict, VERDICT_EXPLOIT);
+        c.classification = isExploit ? 1 : 0;
+        c.confidence = 0;
         _onSuccess();
-        emit Events.ClaimResolved(claimId, classification, confidence);
+        emit Events.ClaimResolved(claimId, c.classification, c.confidence);
 
-        if (classification == uint8(Classification.Exploit) && confidence >= confidenceFloor) {
+        if (isExploit) {
             _payout(claimId, c);
         } else {
             c.state = ClaimState.Rejected;
@@ -197,13 +224,80 @@ contract IncidentResolver is AgentClient {
         (,,, address holder,, uint256 coverageAmount, uint8 tier,,) =
             policyManager.policies(c.policyId);
 
-        // checks-effects-interactions: state first, transfer second.
+        // checks-effects-interactions: state first, transfers second.
         c.state = ClaimState.Confirmed;
         policyManager.markPaidOut(c.policyId, coverageAmount);
         vault.unlock(tier, coverageAmount);
         vault.absorb(coverageAmount, holder);
 
         emit Events.ClaimPaid(claimId, coverageAmount);
+    }
+
+    function _buildClassifierPayload(
+        address coveredContract,
+        bytes32 exploitTx,
+        uint256 incidentBlock
+    ) internal view returns (bytes memory) {
+        string memory prompt = string(
+            abi.encodePacked(
+                "Contract: ",
+                _toHex(coveredContract),
+                ". Suspect transaction: ",
+                _toHex32(exploitTx),
+                ". Incident block: ",
+                _toDec(incidentBlock),
+                ". Was this transaction an exploit?"
+            )
+        );
+        string[] memory allowed = new string[](3);
+        allowed[0] = VERDICT_EXPLOIT;
+        allowed[1] = VERDICT_NOT_EXPLOIT;
+        allowed[2] = VERDICT_INCONCLUSIVE;
+        return abi.encodeCall(
+            ILLMInference.inferString, (prompt, classifierSystemPrompt, false, allowed)
+        );
+    }
+
+    function _stringEq(string memory a, string memory b) internal pure returns (bool) {
+        return keccak256(bytes(a)) == keccak256(bytes(b));
+    }
+
+    function _toHex(address a) internal pure returns (string memory) {
+        return _bytesToHex(abi.encodePacked(a), 20);
+    }
+
+    function _toHex32(bytes32 b) internal pure returns (string memory) {
+        return _bytesToHex(abi.encodePacked(b), 32);
+    }
+
+    function _bytesToHex(bytes memory raw, uint256 len) internal pure returns (string memory) {
+        bytes memory out = new bytes(2 + len * 2);
+        out[0] = "0";
+        out[1] = "x";
+        bytes16 hexAlphabet = 0x30313233343536373839616263646566;
+        for (uint256 i = 0; i < len; ++i) {
+            out[2 + i * 2] = hexAlphabet[uint8(raw[i]) >> 4];
+            out[3 + i * 2] = hexAlphabet[uint8(raw[i]) & 0x0f];
+        }
+        return string(out);
+    }
+
+    function _toDec(uint256 v) internal pure returns (string memory) {
+        if (v == 0) return "0";
+        uint256 n = v;
+        uint256 len;
+        while (n != 0) {
+            ++len;
+            n /= 10;
+        }
+        bytes memory out = new bytes(len);
+        n = v;
+        while (n != 0) {
+            --len;
+            out[len] = bytes1(uint8(48 + (n % 10)));
+            n /= 10;
+        }
+        return string(out);
     }
 
     function _circuitTag() internal pure override returns (string memory) {
