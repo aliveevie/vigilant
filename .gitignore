@@ -1,0 +1,8 @@
+# Dependencies
+agent/node_modules/
+
+# Secrets
+.env
+**/.env
+agent/.env
+contracts/.env
