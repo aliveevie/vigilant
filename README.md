@@ -16,6 +16,13 @@ policy, premium, claim, agent invocation, verdict, and payout is a transaction o
 Somnia; the source of truth is contract storage and consensus-finalised agent
 receipts.
 
+### Repositories
+- **Protocol + autonomous agent (this repo):** <https://github.com/aliveevie/vigilant>
+  - Solidity contracts → [`contracts/`](https://github.com/aliveevie/vigilant/tree/main/contracts)
+  - Autonomous Sentinel agent → [`agent/`](https://github.com/aliveevie/vigilant/tree/main/agent)
+  - Live agent proof → [`deployments/AGENT_PROOF.md`](https://github.com/aliveevie/vigilant/blob/main/deployments/AGENT_PROOF.md)
+- **Frontend (Vite + React + viem, MetaMask):** <https://github.com/aliveevie/vigilant-insure-protocol>
+
 > **Proven live on testnet.** A real risk-score request returned an AI score of
 > **55/100 → Tier B** by consensus, and the autonomous Sentinel filed a warning
 > that the LLM agent adjudicated in ~4 seconds. Receipts:
@@ -182,12 +189,19 @@ governor-tunable as long as the bps sum to 10,000.
 └── DEMO_SCRIPT.md                   — demo video run-of-show
 ```
 
+The autonomous Sentinel agent lives in [`agent/`](https://github.com/aliveevie/vigilant/tree/main/agent).
 The frontend (Vite + React + viem, MetaMask) lives in its own repo:
-`vigilant-insure-protocol`, pre-wired with these addresses and ABIs.
+[`vigilant-insure-protocol`](https://github.com/aliveevie/vigilant-insure-protocol),
+pre-wired with these addresses and ABIs.
 
 ---
 
 ## Quick start
+
+```bash
+git clone https://github.com/aliveevie/vigilant.git
+cd vigilant
+```
 
 **Contracts**
 ```bash
