@@ -3,6 +3,43 @@
 
 export const policyManagerAbi = [
   {
+    type: "function",
+    name: "quoteRiskScoreDeposit",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "requestRiskScore",
+    stateMutability: "payable",
+    inputs: [{ name: "coveredContract", type: "address" }],
+    outputs: [{ name: "requestId", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "coveredContractTier",
+    stateMutability: "view",
+    inputs: [{ type: "address" }],
+    outputs: [
+      { name: "tier", type: "uint8" },
+      { name: "score", type: "uint16" },
+      { name: "cachedAtBlock", type: "uint64" },
+      { name: "expiresAtBlock", type: "uint64" },
+      { name: "rationaleHash", type: "bytes32" },
+    ],
+  },
+  {
+    type: "event",
+    name: "RiskScoreReceived",
+    inputs: [
+      { name: "coveredContract", type: "address", indexed: true },
+      { name: "score", type: "uint16", indexed: false },
+      { name: "tier", type: "uint8", indexed: false },
+      { name: "expiresAtBlock", type: "uint64", indexed: false },
+    ],
+  },
+  {
     type: "event",
     name: "PolicyIssued",
     inputs: [

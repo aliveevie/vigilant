@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { Sentinel } from "./sentinel.js";
+import { runDemo } from "./demo.js";
 import { log } from "./log.js";
 import type { Hex } from "viem";
 
@@ -8,6 +9,14 @@ async function main() {
   if (!pk || !pk.startsWith("0x")) {
     log.alert("SENTINEL_PRIVATE_KEY missing. Copy .env.example to .env and set a funded key.");
     process.exit(1);
+  }
+
+  // `--demo` runs the full end-to-end showcase (risk score + autonomous warning)
+  // and exits. Otherwise the agent runs its live monitor loop (`--simulate`
+  // injects a synthetic signal once at startup).
+  if (process.argv.includes("--demo")) {
+    await runDemo(pk);
+    return;
   }
 
   const simulate = process.argv.includes("--simulate");

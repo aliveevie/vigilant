@@ -7,7 +7,8 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "watch": "tsx watch src/index.ts",
-    "simulate": "tsx src/index.ts --simulate"
+    "simulate": "tsx src/index.ts --simulate",
+    "demo": "tsx src/index.ts --demo"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

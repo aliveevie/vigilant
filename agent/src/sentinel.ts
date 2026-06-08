@@ -12,6 +12,11 @@ import { somniaTestnet, CONTRACTS, settings, explorerTx, explorerAddr } from "./
 import { policyManagerAbi, sentinelRegistryAbi } from "./abi.js";
 import { log } from "./log.js";
 
+/// The PolicyIssued event, resolved by name so ABI ordering can change freely.
+const policyIssuedEvent = policyManagerAbi.find(
+  (x) => x.type === "event" && x.name === "PolicyIssued",
+) as any;
+
 /// State the agent tracks per watched contract.
 interface Watched {
   address: Address;
@@ -89,7 +94,7 @@ export class Sentinel {
       try {
         const logs = await this.pub.getLogs({
           address: CONTRACTS.PolicyManager,
-          event: policyManagerAbi[0],
+          event: policyIssuedEvent,
           fromBlock: from,
           toBlock: to,
         });
