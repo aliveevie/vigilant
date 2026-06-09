@@ -7,6 +7,10 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  // Force Nitro on with the Vercel preset so a self-hosted build emits
+  // `.vercel/output` (Build Output API). Without this, cloning + self-deploying
+  // produces a Vite-only build with no server entry or index.html → Vercel 404.
+  nitro: { preset: "vercel" },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
